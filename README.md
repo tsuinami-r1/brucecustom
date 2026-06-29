@@ -82,6 +82,10 @@ Also, [read our FAQ](https://wiki.bruce.computer/faq/)
 - [x] Samsung Spam
 - [x] Android Spam
 - [x] Spam All
+- [x] Cam Detector
+  - [x] Camera Scan - multi-brand Wi-Fi + BLE camera detector (Hikvision, Dahua, EZVIZ, Reolink, Tapo, Xiaomi, Arlo, Ring, Eufy, Wyze, Imou, Lorex, Swann, Aqara, ... tuned for AU/HK markets)
+  - [x] Camera Deauther - deauths detected camera APs
+  - [x] Flock / Axon / RayBan detectors
 </details>
 
 <details>
