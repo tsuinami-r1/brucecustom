@@ -23,4 +23,13 @@ FLAFS:
 */
 
 void nrf_jammer();
+
+// Touch/button-exitable constant-carrier jam over an explicit nRF channel set
+// (raw nRF channels 1..124). Used by the camera "Jam All" presets.
+void nrf_jam_channels(const uint8_t *nrfChannels, size_t count, const char *title);
+
+// Jam the ~20 MHz occupied by each given 2.4 GHz Wi-Fi channel (1..14) by
+// hopping the carrier across the nRF channels covering it. Used for camera
+// channel-steered "Target Jam".
+void nrf_jam_wifi_channels(const uint8_t *wifiChannels, size_t count, const char *title);
 #endif
