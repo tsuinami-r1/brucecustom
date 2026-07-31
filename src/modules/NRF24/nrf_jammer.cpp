@@ -3,6 +3,7 @@
 #include "core/mykeyboard.h"
 #include "nrf_common.h"
 #include <globals.h>
+#include <vector>
 
 static void shuffleChannels(uint8_t *arr, size_t count) {
     for (size_t i = count - 1; i > 0; i--) {
@@ -204,4 +205,82 @@ void nrf_jammer() {
     } else {
         displayError("NRF24 not found", true);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Targeted constant-carrier jam over a fixed nRF channel set. Unlike nrf_jammer
+// above (which relies on Next/Prev/Sel buttons the CYD lacks), this exits on a
+// screen tap too, so it works on touch-only boards.
+// ---------------------------------------------------------------------------
+void nrf_jam_channels(const uint8_t *nrfChannels, size_t count, const char *title) {
+    if (!nrfChannels || count == 0) {
+        displayError("No channel to jam", true);
+        return;
+    }
+    NRF24_MODE mode = nrf_setMode();
+    if (!nrf_start(mode)) {
+        displayError("NRF24 not found", true);
+        return;
+    }
+
+    if (CHECK_NRF_SPI(mode)) {
+        NRFradio.setPALevel(RF24_PA_MAX);
+        NRFradio.startConstCarrier(RF24_PA_MAX, nrfChannels[0]);
+        NRFradio.setAddressWidth(5);
+        NRFradio.setPayloadSize(2);
+        if (!NRFradio.setDataRate(RF24_2MBPS))
+            if (!NRFradio.setDataRate(RF24_1MBPS)) NRFradio.setDataRate(RF24_250KBPS);
+    }
+
+    drawMainBorderWithTitle("NRF JAMMER", false);
+    printSubtitle(title);
+    padprintln("");
+    padprintln(" Jamming " + String((int)count) + " nRF ch");
+    padprintln("");
+    padprintln("> Tap screen / Esc: exit");
+    tft.drawRoundRect(5, 5, tftWidth - 10, tftHeight - 10, 5, bruceConfig.priColor);
+
+    size_t idx = 0;
+    for (;;) {
+        if (check(EscPress) || check(SelPress)) break;
+        if (touchPoint.pressed) {
+            touchPoint.Clear();
+            AnyKeyPress = false;
+            break;
+        }
+        if (CHECK_NRF_SPI(mode)) NRFradio.setChannel(nrfChannels[idx]);
+        if (++idx >= count) idx = 0;
+    }
+
+    if (CHECK_NRF_SPI(mode)) NRFradio.stopConstCarrier();
+}
+
+void nrf_jam_wifi_channels(const uint8_t *wifiChannels, size_t count, const char *title) {
+    // Map each 20 MHz Wi-Fi channel to the nRF 1 MHz channels covering it.
+    // nRF channel N == (2400 + N) MHz; Wi-Fi ch1 center 2412 == nRF 12, +5/ch;
+    // ch14 is the 2484 MHz outlier == nRF 84. Spread +/-10 covers the 20 MHz.
+    std::vector<uint8_t> nrfCh;
+    for (size_t i = 0; i < count; i++) {
+        uint8_t w = wifiChannels[i];
+        int center;
+        if (w >= 1 && w <= 13) center = 12 + 5 * (w - 1);
+        else if (w == 14) center = 84;
+        else continue;
+        for (int c = center - 10; c <= center + 10; c++) {
+            if (c < 1 || c > 124) continue;
+            uint8_t ch = (uint8_t)c;
+            bool dup = false;
+            for (uint8_t x : nrfCh)
+                if (x == ch) {
+                    dup = true;
+                    break;
+                }
+            if (!dup) nrfCh.push_back(ch);
+        }
+    }
+    if (nrfCh.empty()) {
+        displayError("No valid WiFi ch", true);
+        return;
+    }
+    nrf_jam_channels(nrfCh.data(), nrfCh.size(), title);
 }

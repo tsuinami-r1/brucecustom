@@ -819,11 +819,47 @@ static void radarInfo(const RadarCam &c) {
     while (!check(SelPress) && !check(EscPress)) yield();
 }
 
+// --- NRF jam (channel-steered) ----------------------------------------------
+// A camera only exposes a Wi-Fi channel on the AP/client surfaces; BLE-only
+// cameras have no channel to steer to.
+static bool radarHasChannel(const RadarCam &c) {
+    return c.surface != RS_BLE && c.channel >= 1 && c.channel <= 14;
+}
+
+// Jam a single camera's Wi-Fi channel.
+static void radarJamCam(const RadarCam &c) {
+    uint8_t ch = c.channel;
+    String title = c.brand + " ch" + String(ch);
+    nrf_jam_wifi_channels(&ch, 1, title.c_str());
+}
+
+// Jam every distinct Wi-Fi channel the discovered cameras sit on.
+static void radarJamAll() {
+    std::vector<uint8_t> chans;
+    for (auto &c : g_radar) {
+        if (!radarHasChannel(c)) continue;
+        bool dup = false;
+        for (uint8_t x : chans)
+            if (x == c.channel) {
+                dup = true;
+                break;
+            }
+        if (!dup) chans.push_back(c.channel);
+    }
+    if (chans.empty()) {
+        displayTextLine("No cam Wi-Fi channels");
+        delay(1500);
+        return;
+    }
+    nrf_jam_wifi_channels(chans.data(), chans.size(), "Jam all cams");
+}
+
 static void radarCamMenu(int idx) {
     RadarCam c = g_radar[idx];
     options = {};
     options.push_back({"Info", [c]() { radarInfo(c); }});
     if (c.deauthable) options.push_back({"Target Deauth", [idx]() { radarDeauth(idx); }});
+    if (radarHasChannel(c)) options.push_back({"Target Jam", [c]() { radarJamCam(c); }});
     options.push_back({"Back", []() {}});
     loopOptions(options, MENU_TYPE_SUBMENU, c.brand.c_str());
     options.clear();
@@ -837,6 +873,7 @@ static void radarResults() {
     }
     options = {};
     options.push_back({"Deauth ALL", []() { radarDeauth(-1); }});
+    options.push_back({"Jam ALL", []() { radarJamAll(); }});
     for (size_t i = 0; i < g_radar.size(); i++) {
         int idx = (int)i;
         const char *tag = g_radar[i].surface == RS_BLE   ? "[B]"
@@ -961,16 +998,62 @@ static void cameraRadar() {
     radarResults();
 }
 
+// --- broadband NRF jam presets (no discovery needed) ------------------------
+// The stock nrf_jammer() cycles presets with Next/Prev, which the touch-only
+// CYD can't drive, so we expose the camera-relevant bands as tappable presets
+// via the touch-exitable nrf_jam_channels().
+static void camJamPreset(int which) {
+    std::vector<uint8_t> ch;
+    const char *title;
+    if (which == 1) { // Wi-Fi band, 2400-2484 MHz
+        for (int c = 1; c <= 84; c++) ch.push_back((uint8_t)c);
+        title = "Jam Wi-Fi band";
+    } else if (which == 2) { // 2.4 GHz analog video / AV senders, ~2460-2524 MHz
+        for (int c = 60; c <= 124; c++) ch.push_back((uint8_t)c);
+        title = "Jam video (AV)";
+    } else { // full 2.4 GHz
+        for (int c = 1; c <= 124; c++) ch.push_back((uint8_t)c);
+        title = "Jam full 2.4G";
+    }
+    nrf_jam_channels(ch.data(), ch.size(), title);
+}
+
+// "Jam All": broadband jam, band presets selectable by tap.
+static void camJamAll() {
+    options = {
+        {"Full 2.4 GHz",    []() { camJamPreset(0); }},
+        {"Wi-Fi band",      []() { camJamPreset(1); }},
+        {"Video (2.4G AV)", []() { camJamPreset(2); }},
+    };
+    loopOptions(options, MENU_TYPE_SUBMENU, "Jam All");
+    options.clear();
+}
+
+// "Target Jam": pick a predetermined Wi-Fi channel to jam, no discovery needed.
+static void camTargetJam() {
+    options = {};
+    for (int ch = 1; ch <= 13; ch++) {
+        uint8_t c = (uint8_t)ch;
+        options.push_back({"Wi-Fi Ch " + String(ch), [c]() {
+                               String t = "Jam Wi-Fi ch" + String(c);
+                               nrf_jam_wifi_channels(&c, 1, t.c_str());
+                           }});
+    }
+    loopOptions(options, MENU_TYPE_SUBMENU, "Target Jam");
+    options.clear();
+}
+
 void camDetectorMenu() {
     options = {
-        {"Camera Radar",    cameraRadar               },
-        {"TUTK Watch",      tutkWatch                 },
-        {"Flock Detector",  flockDetector             },
-        {"Bodycam Detector", bodycamDetector          },
-        {"RayBan Detector", raybanDetector            },
-        // Shortcut to the built-in NRF24 broadband 2.4GHz jammer. Blunt (jams
-        // all 2.4GHz, not just the camera); needs an NRF24 module (NM-RF-HAT).
-        {"NRF Jammer",      nrf_jammer                },
+        {"Camera Radar",     cameraRadar    },
+        {"TUTK Watch",       tutkWatch      },
+        {"Flock Detector",   flockDetector  },
+        {"Bodycam Detector", bodycamDetector},
+        {"RayBan Detector",  raybanDetector },
+        // NRF24 2.4GHz jamming (needs an NRF24 module, e.g. NM-RF-HAT). Jam All
+        // is broadband; Target Jam steers to one predetermined Wi-Fi channel.
+        {"Jam All",          camJamAll      },
+        {"Target Jam",       camTargetJam   },
     };
     addOptionToMainMenu();
     loopOptions(options, MENU_TYPE_SUBMENU, "Cam Detector");
