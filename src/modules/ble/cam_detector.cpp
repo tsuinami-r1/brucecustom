@@ -12,6 +12,7 @@
 #include "lwip/etharp.h"
 #include "lwip/inet.h"
 #include "lwip/tcpip.h"
+#include "modules/NRF24/nrf_jammer.h"
 #include "modules/wifi/wifi_atks.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -967,6 +968,9 @@ void camDetectorMenu() {
         {"Flock Detector",  flockDetector             },
         {"Bodycam Detector", bodycamDetector          },
         {"RayBan Detector", raybanDetector            },
+        // Shortcut to the built-in NRF24 broadband 2.4GHz jammer. Blunt (jams
+        // all 2.4GHz, not just the camera); needs an NRF24 module (NM-RF-HAT).
+        {"NRF Jammer",      nrf_jammer                },
     };
     addOptionToMainMenu();
     loopOptions(options, MENU_TYPE_SUBMENU, "Cam Detector");
