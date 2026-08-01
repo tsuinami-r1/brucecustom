@@ -796,7 +796,8 @@ static void radarDeauth(int onlyIndex) {
         }
     }
     wifi_atk_unsetWifi();
-    returnToMenu = true;
+    // Return to the caller's menu (camera list / camera actions), not all the
+    // way out - the persistent menus below handle navigation.
 }
 
 // --- results UI -------------------------------------------------------------
@@ -854,37 +855,49 @@ static void radarJamAll() {
     nrf_jam_wifi_channels(chans.data(), chans.size(), "Jam all cams");
 }
 
+// Persistent per-camera action menu: viewing Info / running a deauth or jam
+// returns here (the previous directory), not out to the camera list. A local
+// option vector keeps it safe to nest under the persistent results list.
 static void radarCamMenu(int idx) {
     RadarCam c = g_radar[idx];
-    options = {};
-    options.push_back({"Info", [c]() { radarInfo(c); }});
-    if (c.deauthable) options.push_back({"Target Deauth", [idx]() { radarDeauth(idx); }});
-    if (radarHasChannel(c)) options.push_back({"Target Jam", [c]() { radarJamCam(c); }});
-    options.push_back({"Back", []() {}});
-    loopOptions(options, MENU_TYPE_SUBMENU, c.brand.c_str());
-    options.clear();
+    while (true) {
+        if (returnToMenu) return; // deep "Main Menu" request bubbles straight up
+        std::vector<Option> localOptions;
+        localOptions.push_back({"Info", [c]() { radarInfo(c); }});
+        if (c.deauthable) localOptions.push_back({"Target Deauth", [idx]() { radarDeauth(idx); }});
+        if (radarHasChannel(c)) localOptions.push_back({"Target Jam", [c]() { radarJamCam(c); }});
+        localOptions.push_back({"Back", []() {}});
+        int sel = loopOptions(localOptions, MENU_TYPE_SUBMENU, c.brand.c_str());
+        if (sel == -1 || sel == (int)localOptions.size() - 1) return; // Esc or Back
+    }
 }
 
+// Persistent results list: selecting a camera opens its action menu and comes
+// back here on exit (no re-scan), so browsing several cameras is one scan. Esc
+// or "Back" returns to the Cam Detector menu (the previous directory).
 static void radarResults() {
     if (g_radar.empty()) {
         displayTextLine("No cameras found");
         delay(1500);
         return;
     }
-    options = {};
-    options.push_back({"Deauth ALL", []() { radarDeauth(-1); }});
-    options.push_back({"Jam ALL", []() { radarJamAll(); }});
-    for (size_t i = 0; i < g_radar.size(); i++) {
-        int idx = (int)i;
-        const char *tag = g_radar[i].surface == RS_BLE   ? "[B]"
-                          : g_radar[i].surface == RS_AP  ? "[AP]"
-                                                         : "[LAN]";
-        String label = g_radar[i].brand + " " + tag;
-        options.push_back({label.c_str(), [idx]() { radarCamMenu(idx); }});
+    while (true) {
+        if (returnToMenu) return;
+        std::vector<Option> localOptions;
+        localOptions.push_back({"Deauth ALL", []() { radarDeauth(-1); }});
+        localOptions.push_back({"Jam ALL", []() { radarJamAll(); }});
+        for (size_t i = 0; i < g_radar.size(); i++) {
+            int idx = (int)i;
+            const char *tag = g_radar[i].surface == RS_BLE   ? "[B]"
+                              : g_radar[i].surface == RS_AP  ? "[AP]"
+                                                             : "[LAN]";
+            String label = g_radar[i].brand + " " + tag;
+            localOptions.push_back({label, [idx]() { radarCamMenu(idx); }});
+        }
+        localOptions.push_back({"Back", []() {}});
+        int sel = loopOptions(localOptions, MENU_TYPE_SUBMENU, "Cameras");
+        if (sel == -1 || sel == (int)localOptions.size() - 1) return;
     }
-    addOptionToMainMenu();
-    loopOptions(options, MENU_TYPE_SUBMENU, "Cameras");
-    options.clear();
 }
 
 static void radarWardriveScreen(const String &phase, bool exitActive, int round) {
@@ -1018,44 +1031,57 @@ static void camJamPreset(int which) {
     nrf_jam_channels(ch.data(), ch.size(), title);
 }
 
-// "Jam All": broadband jam, band presets selectable by tap.
+// "Jam All": broadband jam, band presets selectable by tap. Persistent so a
+// preset returns here, and Esc/Back returns to the Cam Detector menu.
 static void camJamAll() {
-    options = {
-        {"Full 2.4 GHz",    []() { camJamPreset(0); }},
-        {"Wi-Fi band",      []() { camJamPreset(1); }},
-        {"Video (2.4G AV)", []() { camJamPreset(2); }},
-    };
-    loopOptions(options, MENU_TYPE_SUBMENU, "Jam All");
-    options.clear();
+    while (true) {
+        std::vector<Option> localOptions = {
+            {"Full 2.4 GHz",    []() { camJamPreset(0); }},
+            {"Wi-Fi band",      []() { camJamPreset(1); }},
+            {"Video (2.4G AV)", []() { camJamPreset(2); }},
+            {"Back",            []() {}                  },
+        };
+        int sel = loopOptions(localOptions, MENU_TYPE_SUBMENU, "Jam All");
+        if (sel == -1 || sel == (int)localOptions.size() - 1) return;
+    }
 }
 
 // "Target Jam": pick a predetermined Wi-Fi channel to jam, no discovery needed.
 static void camTargetJam() {
-    options = {};
-    for (int ch = 1; ch <= 13; ch++) {
-        uint8_t c = (uint8_t)ch;
-        options.push_back({"Wi-Fi Ch " + String(ch), [c]() {
-                               String t = "Jam Wi-Fi ch" + String(c);
-                               nrf_jam_wifi_channels(&c, 1, t.c_str());
-                           }});
+    while (true) {
+        std::vector<Option> localOptions;
+        for (int ch = 1; ch <= 13; ch++) {
+            uint8_t c = (uint8_t)ch;
+            localOptions.push_back({"Wi-Fi Ch " + String(ch), [c]() {
+                                        String t = "Jam Wi-Fi ch" + String(c);
+                                        nrf_jam_wifi_channels(&c, 1, t.c_str());
+                                    }});
+        }
+        localOptions.push_back({"Back", []() {}});
+        int sel = loopOptions(localOptions, MENU_TYPE_SUBMENU, "Target Jam");
+        if (sel == -1 || sel == (int)localOptions.size() - 1) return;
     }
-    loopOptions(options, MENU_TYPE_SUBMENU, "Target Jam");
-    options.clear();
 }
 
+// Persistent: each feature returns here instead of exiting the section, and Esc
+// or "Back" returns to the parent (Bluetooth) menu - the previous directory.
 void camDetectorMenu() {
-    options = {
-        {"Camera Radar",     cameraRadar    },
-        {"TUTK Watch",       tutkWatch      },
-        {"Flock Detector",   flockDetector  },
-        {"Bodycam Detector", bodycamDetector},
-        {"RayBan Detector",  raybanDetector },
-        // NRF24 2.4GHz jamming (needs an NRF24 module, e.g. NM-RF-HAT). Jam All
-        // is broadband; Target Jam steers to one predetermined Wi-Fi channel.
-        {"Jam All",          camJamAll      },
-        {"Target Jam",       camTargetJam   },
-    };
-    addOptionToMainMenu();
-    loopOptions(options, MENU_TYPE_SUBMENU, "Cam Detector");
-    options.clear();
+    returnToMenu = false;
+    while (true) {
+        if (returnToMenu) return; // a deep "Main Menu" bubbles up past BLE to root
+        std::vector<Option> localOptions = {
+            {"Camera Radar",     cameraRadar    },
+            {"TUTK Watch",       tutkWatch      },
+            {"Flock Detector",   flockDetector  },
+            {"Bodycam Detector", bodycamDetector},
+            {"RayBan Detector",  raybanDetector },
+            // NRF24 2.4GHz jamming (needs an NRF24 module, e.g. NM-RF-HAT). Jam
+            // All is broadband; Target Jam steers to one predetermined channel.
+            {"Jam All",          camJamAll      },
+            {"Target Jam",       camTargetJam   },
+            {"Back",             []() {}        },
+        };
+        int sel = loopOptions(localOptions, MENU_TYPE_SUBMENU, "Cam Detector");
+        if (sel == -1 || sel == (int)localOptions.size() - 1) return;
+    }
 }

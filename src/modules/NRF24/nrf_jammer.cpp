@@ -232,7 +232,7 @@ void nrf_jam_channels(const uint8_t *nrfChannels, size_t count, const char *titl
             if (!NRFradio.setDataRate(RF24_1MBPS)) NRFradio.setDataRate(RF24_250KBPS);
     }
 
-    drawMainBorderWithTitle("NRF JAMMER", false);
+    drawMainBorderWithTitle("NRF JAMMER"); // clear=true: wipe the prior menu
     printSubtitle(title);
     padprintln("");
     padprintln(" Jamming " + String((int)count) + " nRF ch");

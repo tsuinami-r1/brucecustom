@@ -14,39 +14,51 @@
 #include <globals.h>
 
 void BleMenu::optionsMenu() {
-    options.clear();
+    // Persistent: a feature returns here (the previous directory) instead of
+    // dropping to the main menu. Exit only on Esc or the "Main Menu" item.
+    returnToMenu = false;
+    while (true) {
+        if (returnToMenu) {
+            returnToMenu = false;
+            return;
+        }
+        options.clear();
 #if !defined(LITE_VERSION)
-    if (BLEConnected) {
-        options.push_back({"Disconnect", [=]() {
-                               BLEDevice::deinit();
-                               BLEConnected = false;
-                               delete hid_ble;
-                               hid_ble = nullptr;
+        if (BLEConnected) {
+            options.push_back({"Disconnect", [=]() {
+                                   BLEDevice::deinit();
+                                   BLEConnected = false;
+                                   delete hid_ble;
+                                   hid_ble = nullptr;
+                               }});
+        }
+#endif
+#if !defined(LITE_VERSION)
+        options.push_back({"Media Cmds", [=]() { MediaCommands(hid_ble, true); }});
+        options.push_back({"BLE Scan", ble_scan});
+        options.push_back({"iBeacon", [=]() {
+                               ibeacon("Bruce", "e4c159a0-8c82-11e6-bdf4-0800200c9a66", 0x004C);
                            }});
-    }
+        options.push_back({"Bad BLE", [=]() { ducky_setup(hid_ble, true); }});
+        options.push_back({"BLE Keyboard", [=]() { ducky_keyboard(hid_ble, true); }});
 #endif
-#if !defined(LITE_VERSION)
-    options.push_back({"Media Cmds", [=]() { MediaCommands(hid_ble, true); }});
-    options.push_back({"BLE Scan", ble_scan});
-    options.push_back({"iBeacon", [=]() {
-                           ibeacon("Bruce", "e4c159a0-8c82-11e6-bdf4-0800200c9a66", 0x004C);
-                       }});
-    options.push_back({"Bad BLE", [=]() { ducky_setup(hid_ble, true); }});
-    options.push_back({"BLE Keyboard", [=]() { ducky_keyboard(hid_ble, true); }});
-#endif
-    options.push_back({"BLE Spam", [=]() { spamMenu(); }});
-    options.push_back({"Cam Detector", [=]() { camDetectorMenu(); }});
+        options.push_back({"BLE Spam", [=]() { spamMenu(); }});
+        options.push_back({"Cam Detector", [=]() { camDetectorMenu(); }});
 
 #if !defined(LITE_VERSION)
-    options.push_back({"BLE Suite", [=]() { BleSuiteMenu(); }});
-    options.push_back({"Ninebot", [=]() { BLENinebot(); }});
-    options.push_back({"Presenter mode", [=]() { PresenterMode(hid_ble, true); }});
+        options.push_back({"BLE Suite", [=]() { BleSuiteMenu(); }});
+        options.push_back({"Ninebot", [=]() { BLENinebot(); }});
+        options.push_back({"Presenter mode", [=]() { PresenterMode(hid_ble, true); }});
 #else
-    options.push_back({"BLE Sniffer", [=]() { BLE_SnifferMenu(); }});
+        options.push_back({"BLE Sniffer", [=]() { BLE_SnifferMenu(); }});
 #endif
-    addOptionToMainMenu();
+        addOptionToMainMenu();
 
-    loopOptions(options, MENU_TYPE_SUBMENU, "Bluetooth", 0, false);
+        int selected = loopOptions(options, MENU_TYPE_SUBMENU, "Bluetooth", 0, false);
+        bool exit = (selected == -1) || returnToMenu; // Esc, or "Main Menu" chosen
+        options.clear();
+        if (exit) return;
+    }
 }
 
 void BleMenu::drawIcon(float scale) {
