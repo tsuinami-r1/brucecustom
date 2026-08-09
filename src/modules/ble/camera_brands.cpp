@@ -18,7 +18,9 @@ static const char *const oui_hikvision[] = {
     "3c:1b:f8", "44:47:cc", "54:8c:81", "54:c4:15", "74:3f:c2", "80:7c:62", "80:be:af", "84:9a:40",
     "98:8b:0a", "ac:b9:2f", "bc:9b:5e", "c4:2f:90", "d4:e8:53", "dc:d2:6a", "ec:c8:9c", "f8:4d:fc",
     "4c:1f:86", "a4:4b:d9", "88:de:39", "84:94:59", "08:3b:c1", "00:bc:99", "04:ee:cd", "8c:22:d2",
-    "48:78:5b", "cc:13:f3", "40:b5:70", "24:b1:05", "bc:29:78"
+    "48:78:5b", "cc:13:f3", "40:b5:70", "24:b1:05", "bc:29:78",
+    // Hangzhou Hikrobot (Hikvision subsidiary; machine-vision + camera modules)
+    "34:bd:20"
 };
 
 // Zhejiang Dahua Technology (33 prefixes).
@@ -96,6 +98,16 @@ static const char *const oui_mobotix[] = {"00:03:c5"};
 static const char *const oui_geovision[] = {"00:13:e2"};
 // Sunell Electronics (China; thermal / surveillance).
 static const char *const oui_sunell[] = {"00:1c:27"};
+// Shenzhen TVT Digital - large DVR/IP-camera ODM, heavily white-labelled.
+static const char *const oui_tvt[] = {"00:18:ae", "58:5b:69"};
+// Guangdong/Guangzhou Juan Intelligent - the ODM behind VStarcam / Eye4 (the
+// brand itself holds no IEEE block, so these are its only OUI signature).
+static const char *const oui_vstarcam[] = {"a4:86:db", "08:3a:2f", "84:d0:db", "9c:a3:a9"};
+// Avigilon Alta (Motorola Solutions) and Verkada - cloud surveillance.
+static const char *const oui_avigilon[] = {"70:1a:d5"};
+static const char *const oui_verkada[] = {"e0:a7:00"};
+// Bosch Sicherheitssysteme (security division).
+static const char *const oui_bosch[] = {"30:f0:28"};
 
 // --- Consumer brands that also hold dedicated OUI blocks ---------------------
 // Blink by Amazon (5). (enblink 28:a1:86 excluded - unrelated vendor.)
@@ -148,6 +160,11 @@ static const char *const pat_milesight[] = {"milesight"};
 static const char *const pat_mobotix[] = {"mobotix"};
 static const char *const pat_geovision[] = {"geovision"};
 static const char *const pat_sunell[] = {"sunell"};
+static const char *const pat_tvt[] = {"tvt", "td-", "provision-isr"};
+static const char *const pat_vstarcam[] = {"vstarcam", "eye4", "juan"};
+static const char *const pat_avigilon[] = {"avigilon"};
+static const char *const pat_verkada[] = {"verkada"};
+static const char *const pat_bosch[] = {"bosch", "autodome", "dinion", "flexidome"};
 // Big OEM / white-label ecosystems (Xiongmai/XMeye, CamHi, V380, Yoosee/Gwell,
 // iCSee, Ubox, Tuya). These ship generic Wi-Fi chips, so name/SSID/app only.
 static const char *const pat_xmeye[] = {"xiongmai", "xmeye", "xm-", "camhi", "ipcam"};
@@ -178,6 +195,11 @@ static const CameraBrand kBrands[] = {
     {"Mobotix", oui_mobotix, ARRSZ(oui_mobotix), pat_mobotix, ARRSZ(pat_mobotix)},
     {"GeoVision", oui_geovision, ARRSZ(oui_geovision), pat_geovision, ARRSZ(pat_geovision)},
     {"Sunell", oui_sunell, ARRSZ(oui_sunell), pat_sunell, ARRSZ(pat_sunell)},
+    {"TVT", oui_tvt, ARRSZ(oui_tvt), pat_tvt, ARRSZ(pat_tvt)},
+    {"VStarcam", oui_vstarcam, ARRSZ(oui_vstarcam), pat_vstarcam, ARRSZ(pat_vstarcam)},
+    {"Avigilon", oui_avigilon, ARRSZ(oui_avigilon), pat_avigilon, ARRSZ(pat_avigilon)},
+    {"Verkada", oui_verkada, ARRSZ(oui_verkada), pat_verkada, ARRSZ(pat_verkada)},
+    {"Bosch", oui_bosch, ARRSZ(oui_bosch), pat_bosch, ARRSZ(pat_bosch)},
     {"Lorex", oui_lorex, ARRSZ(oui_lorex), nullptr, 0},
     {"Meari/CloudEdge", oui_meari, ARRSZ(oui_meari), pat_meari, ARRSZ(pat_meari)},
     {"Axon", oui_axon, ARRSZ(oui_axon), pat_axon, ARRSZ(pat_axon)},
