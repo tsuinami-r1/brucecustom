@@ -11,6 +11,7 @@
 #include "esp_wifi.h"
 #include "lwip/etharp.h"
 #include "lwip/inet.h"
+#include "cam_probe.h"
 #include "lwip/tcpip.h"
 #include "modules/NRF24/nrf_jammer.h"
 #include "modules/wifi/wifi_atks.h"
@@ -652,6 +653,30 @@ static struct netif *radarStaNetif() {
 // subnet), not a detection bug.
 static int g_lanHostsSeen = 0;
 
+// Resolve one IP to a MAC via ARP (used for devices that announce themselves by
+// IP only, e.g. ONVIF). Returns false when ARP is blocked or the host is gone.
+static bool radarResolveMac(const IPAddress &ip, uint8_t out[6]) {
+    struct netif *nif = radarStaNetif();
+    if (!nif) return false;
+    ip4_addr_t target;
+    target.addr = (uint32_t)ip;
+    LOCK_TCPIP_CORE();
+    etharp_request(nif, &target);
+    UNLOCK_TCPIP_CORE();
+    delay(120);
+    for (uint32_t i = 0; i < ARP_TABLE_SIZE; i++) {
+        ip4_addr_t *ipr = nullptr;
+        struct eth_addr *ethr = nullptr;
+        struct netif *tif = nullptr;
+        if (!etharp_get_entry(i, &ipr, &tif, &ethr)) continue;
+        if (ipr && ethr && ipr->addr == (uint32_t)ip) {
+            memcpy(out, ethr->addr, 6);
+            return true;
+        }
+    }
+    return false;
+}
+
 // On the currently-joined LAN: ARP-sweep + P2P probe -> camera client stations.
 static void radarScanLan(bool alert) {
     if (WiFi.status() != WL_CONNECTED) return;
@@ -744,6 +769,64 @@ static void radarScanLan(bool alert) {
         c.deauthable = true;
         memcpy(c.apBssid, curBssid, 6);
         c.channel = curCh;
+        g_radar.push_back(c);
+        if (alert) radarAlert(g_radar.back());
+    }
+
+    // Native discovery protocols: ask cameras to identify themselves. These
+    // catch devices no OUI/SSID rule can (OEM rebrands, unknown prefixes) and
+    // return a real model string. SADP = Hikvision family, ONVIF = everyone.
+    std::vector<ProbedCam> probed;
+    sadpDiscover(probed);
+    onvifDiscover(probed);
+    for (auto &pc : probed) {
+        uint8_t mb[6];
+        bool haveMac = pc.haveMac;
+        if (haveMac) memcpy(mb, pc.mac, 6);
+        else haveMac = radarResolveMac(pc.ip, mb); // ARP-resolve the reported IP
+
+        String label = pc.brand;
+        if (!pc.model.isEmpty() && pc.model != pc.brand) label += " " + pc.model;
+
+        // Already found via OUI/P2P? Enrich it with the model the camera just
+        // told us rather than listing the same device twice.
+        if (haveMac) {
+            bool merged = false;
+            for (auto &ex : g_radar) {
+                if (memcmp(ex.mac, mb, 6) != 0) continue;
+                if (ex.name.indexOf(pc.model) < 0) ex.name = label;
+                if (ex.method.indexOf(pc.method) < 0) ex.method += " + " + pc.method;
+                if (!ex.haveIp) {
+                    ex.haveIp = true;
+                    ex.ip = pc.ip;
+                }
+                merged = true;
+                break;
+            }
+            if (merged) continue;
+        }
+
+        RadarCam c = {};
+        c.brand = pc.brand;
+        c.name = pc.model.isEmpty() ? pc.ip.toString() : pc.model;
+        if (haveMac) {
+            char ms[18];
+            macToStr6(mb, ms);
+            c.macStr = ms;
+            memcpy(c.mac, mb, 6);
+        } else {
+            c.macStr = "(unresolved)"; // reported itself, but ARP is blocked
+        }
+        c.surface = RS_CLIENT;
+        c.method = pc.method;
+        c.haveIp = true;
+        c.ip = pc.ip;
+        // Without a MAC there is no station to deauth/jam by address.
+        c.deauthable = haveMac;
+        if (haveMac) {
+            memcpy(c.apBssid, curBssid, 6);
+            c.channel = curCh;
+        }
         g_radar.push_back(c);
         if (alert) radarAlert(g_radar.back());
     }
