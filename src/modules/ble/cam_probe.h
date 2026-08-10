@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <IPAddress.h>
+#include <functional>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,11 @@ struct ProbedCam {
 
 // Append discovered cameras to `out` (deduplicated by IP against existing
 // entries). Both require an active STA connection to the target LAN.
-void sadpDiscover(std::vector<ProbedCam> &out);
-void onvifDiscover(std::vector<ProbedCam> &out);
+//
+// `shouldAbort` is polled while waiting for replies so the caller's exit
+// control ([X]/Esc) stays responsive across the multi-second listen window;
+// pass nullptr to run uninterruptible.
+void sadpDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
+void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
 
 #endif

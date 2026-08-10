@@ -46,9 +46,10 @@ static bool alreadyProbed(const std::vector<ProbedCam> &out, const IPAddress &ip
 // datagrams for `windowMs` and hand each one to `onReply`.
 static void multicastProbe(
     uint16_t port, const String &payload, uint32_t windowMs,
-    std::function<void(const String &, const IPAddress &)> onReply
+    std::function<void(const String &, const IPAddress &)> onReply, std::function<bool()> shouldAbort
 ) {
     if (WiFi.status() != WL_CONNECTED) return;
+    if (shouldAbort && shouldAbort()) return;
 
     IPAddress group;
     if (!group.fromString(MCAST_GROUP)) return;
@@ -60,31 +61,45 @@ static void multicastProbe(
         if (!udp.begin(port)) return;
     }
 
+    static char buf[PROBE_BUF];
+    // Drain between sends too: replies to the first probe arrive within
+    // milliseconds and would otherwise sit in the socket buffer (and can be
+    // dropped there when many cameras answer at once).
+    auto drain = [&]() {
+        int len;
+        while ((len = udp.parsePacket()) > 0) {
+            IPAddress from = udp.remoteIP();
+            int n = udp.read(buf, PROBE_BUF - 1);
+            if (n <= 0) break;
+            buf[n] = '\0';
+            onReply(String(buf), from);
+        }
+    };
+
     for (int i = 0; i < 3; i++) {
         udp.beginPacket(group, port);
         udp.write((const uint8_t *)payload.c_str(), payload.length());
         udp.endPacket();
-        delay(60);
+        for (int t = 0; t < 6; t++) {
+            delay(10);
+            drain();
+        }
+        if (shouldAbort && shouldAbort()) {
+            udp.stop();
+            return;
+        }
     }
 
-    static char buf[PROBE_BUF];
     uint32_t start = millis();
     while (millis() - start < windowMs) {
-        int len = udp.parsePacket();
-        if (len > 0) {
-            IPAddress from = udp.remoteIP();
-            int n = udp.read(buf, PROBE_BUF - 1);
-            if (n > 0) {
-                buf[n] = '\0';
-                onReply(String(buf), from);
-            }
-        }
+        drain();
+        if (shouldAbort && shouldAbort()) break;
         delay(5);
     }
     udp.stop();
 }
 
-void sadpDiscover(std::vector<ProbedCam> &out) {
+void sadpDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort) {
     // The inquiry the official SADP tool broadcasts. The UUID is arbitrary;
     // devices echo it back in their ProbeMatch.
     const String probe = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
@@ -113,7 +128,7 @@ void sadpDiscover(std::vector<ProbedCam> &out) {
         // A SADP responder that doesn't name itself is still a camera/NVR.
         if (c.model.isEmpty()) c.model = "SADP device";
         out.push_back(c);
-    });
+    }, shouldAbort);
 }
 
 // Pull "onvif://www.onvif.org/<key>/<value>" out of the Scopes list.
@@ -131,7 +146,7 @@ static String onvifScope(const String &scopes, const char *key) {
     return v;
 }
 
-void onvifDiscover(std::vector<ProbedCam> &out) {
+void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort) {
     // Standard WS-Discovery Probe filtered to ONVIF video transmitters, i.e.
     // cameras and encoders (not NVR clients/displays).
     const String probe =
@@ -179,5 +194,5 @@ void onvifDiscover(std::vector<ProbedCam> &out) {
         c.detail = onvifScope(scopes, "location");
 
         out.push_back(c);
-    });
+    }, shouldAbort);
 }

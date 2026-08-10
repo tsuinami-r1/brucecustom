@@ -198,13 +198,26 @@ static void showResults(const String &title, std::vector<CamDevice> &devices) {
 // greyed = a scan is running and the stop registers right after.
 static const int RADAR_XBOX_X = 6, RADAR_XBOX_Y = 4, RADAR_XBOX_W = 30, RADAR_XBOX_H = 26;
 
+// Latched: a tap registered deep inside a long scan (LAN sweep, SADP/ONVIF)
+// must still be seen by the outer wardrive loop, which polls this again after
+// the scan returns. Without the latch the tap is consumed by the inner check
+// and the sweep just carries on to the next phase. Cleared when a scan starts.
+static bool g_radarStop = false;
+
+static void radarClearStop() { g_radarStop = false; }
+
 static bool radarExitTapped() {
-    if (check(EscPress)) return true; // physical Esc/back on button devices
+    if (g_radarStop) return true;
+    if (check(EscPress)) { // physical Esc/back on button devices
+        g_radarStop = true;
+        return true;
+    }
     if (touchPoint.pressed) {
         bool in = touchPoint.x >= RADAR_XBOX_X && touchPoint.x <= RADAR_XBOX_X + RADAR_XBOX_W &&
                   touchPoint.y >= RADAR_XBOX_Y && touchPoint.y <= RADAR_XBOX_Y + RADAR_XBOX_H;
         touchPoint.Clear();
         AnyKeyPress = false;
+        if (in) g_radarStop = true;
         return in;
     }
     return false;
@@ -274,6 +287,7 @@ static void persistentDetector(
 
     uint16_t round = 0;
     bool stop = false;
+    radarClearStop(); // don't inherit a stop latched by a previous scan
     radarScanScreen(title, "Starting...", false, "Found", 0, 0); // immediate feedback, no blank hang
     while (!stop) {
         round++;
@@ -733,7 +747,9 @@ static void radarScanLan(bool alert) {
     // Use the proven ARP-request path (as netcut) rather than UDP pings. The
     // ESP32 ARP table is tiny (~10 entries), so harvest after every request so a
     // resolved host is read within its own window before later requests evict it.
-    for (uint32_t h = first; h <= last && !check(EscPress); h++) {
+    // radarExitTapped() (not check(EscPress)) so the sweep is interruptible on
+    // touch-only boards too - this loop can run for thousands of hosts.
+    for (uint32_t h = first; h <= last && !radarExitTapped(); h++) {
         if (h == myHost) continue;
         if (nif) {
             ip4_addr_t target;
@@ -777,8 +793,8 @@ static void radarScanLan(bool alert) {
     // catch devices no OUI/SSID rule can (OEM rebrands, unknown prefixes) and
     // return a real model string. SADP = Hikvision family, ONVIF = everyone.
     std::vector<ProbedCam> probed;
-    sadpDiscover(probed);
-    onvifDiscover(probed);
+    sadpDiscover(probed, radarExitTapped);
+    onvifDiscover(probed, radarExitTapped);
     for (auto &pc : probed) {
         uint8_t mb[6];
         bool haveMac = pc.haveMac;
@@ -848,10 +864,17 @@ static void radarDeauth(int onlyIndex) {
     memcpy(deauth_frame, deauth_frame_default, sizeof(deauth_frame_default));
     uint32_t lastTime = millis();
     uint16_t count = 0;
-    drawMainBorderWithTitle("Cam Deauth");
-    tft.setCursor(10, 60);
-    tft.println(String(n) + " target(s)");
-    while (!check(EscPress)) {
+    radarClearStop();
+
+    // Draw with the same [X] affordance the scans use: this loop is otherwise
+    // infinite, and touch-only boards never raise EscPress - so before this the
+    // only way out of a deauth was a reboot.
+    auto drawDeauth = [&](uint16_t fps) {
+        radarScanScreen("Cam Deauth", String(n) + " target(s)", true, "Frames/s", fps, 0);
+    };
+    drawDeauth(0);
+
+    while (!radarExitTapped()) {
         for (size_t i = 0; i < g_radar.size(); i++) {
             RadarCam &c = g_radar[i];
             if (!c.deauthable || (onlyIndex >= 0 && (int)i != onlyIndex)) continue;
@@ -864,16 +887,14 @@ static void radarDeauth(int onlyIndex) {
             for (int k = 0; k < 40; k++) {
                 send_raw_frame(deauth_frame, sizeof(deauth_frame_default));
                 count += 3;
-                if (EscPress) break;
+                // Cheap latched check: polling touch here (40x per target) would
+                // stall frame TX, so the outer loop does the real polling.
+                if (g_radarStop) break;
             }
-            if (EscPress) break;
+            if (g_radarStop) break;
         }
         if (millis() - lastTime > 2000) {
-            drawMainBorderWithTitle("Cam Deauth");
-            tft.setCursor(10, 60);
-            tft.println(String(n) + " target(s)");
-            tft.setCursor(10, tftHeight - 25);
-            tft.println("Frames: " + String(count / 2) + "/s   ");
+            drawDeauth(count / 2);
             count = 0;
             lastTime = millis();
         }
@@ -999,6 +1020,7 @@ static void cameraRadar() {
     if (cancelled) return;
 
     g_radar.clear();
+    radarClearStop(); // fresh scan: clear any stop latched by a previous run
 
     if (!wardrive) {
         // Passive: a single pass over every surface.
