@@ -1,5 +1,6 @@
 #include "cam_probe.h"
 #include <WiFi.h>
+#include <WiFiClient.h>
 #include <WiFiUdp.h>
 #include <ctype.h>
 #include <functional>
@@ -195,4 +196,52 @@ void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbor
 
         out.push_back(c);
     }, shouldAbort);
+}
+
+// Pull realm="..." out of a WWW-Authenticate header (Basic or Digest).
+static String headerRealm(const String &respLower, const String &resp) {
+    int a = respLower.indexOf("www-authenticate:");
+    if (a < 0) return "";
+    int r = respLower.indexOf("realm=\"", a);
+    if (r < 0) return "";
+    int s = r + 7;
+    int e = resp.indexOf('"', s);
+    if (e <= s) return "";
+    return resp.substring(s, e);
+}
+
+bool httpHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs) {
+    server = "";
+    realm = "";
+    if (WiFi.status() != WL_CONNECTED) return false;
+
+    WiFiClient client;
+    if (!client.connect(ip, 80, timeoutMs)) return false;
+    client.print(
+        String("GET / HTTP/1.0\r\nHost: ") + ip.toString() +
+        "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+    );
+
+    // Read just the headers: stop at the blank line, a size cap, or the deadline.
+    String resp;
+    uint32_t deadline = millis() + timeoutMs + 400;
+    while (millis() < deadline && resp.length() < 1536) {
+        while (client.available() && resp.length() < 1536) resp += (char)client.read();
+        if (resp.indexOf("\r\n\r\n") >= 0) break;
+        if (!client.connected() && !client.available()) break;
+        delay(4);
+    }
+    client.stop();
+    if (resp.isEmpty()) return false;
+
+    String low = resp;
+    low.toLowerCase();
+    int si = low.indexOf("server:");
+    if (si >= 0) {
+        int e = low.indexOf("\r\n", si);
+        server = resp.substring(si + 7, e < 0 ? resp.length() : e);
+        server.trim();
+    }
+    realm = headerRealm(low, resp);
+    return true;
 }

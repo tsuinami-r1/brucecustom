@@ -40,4 +40,11 @@ struct ProbedCam {
 void sadpDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
 void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
 
+// Unauthenticated HTTP enumeration: GET / on port 80 and return the Server
+// header and the Digest `realm` from a 401 (empty when absent). For camera web
+// UIs the realm is often the exact model - "DS-2CD2432F-IW" (Hikvision) or
+// "DH_<mac>" (Dahua) - so this both confirms and enriches a device without
+// touching credentials. Returns true if the host answered as HTTP at all.
+bool httpHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs = 500);
+
 #endif
