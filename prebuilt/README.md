@@ -6,13 +6,13 @@ nothing here affects firmware operation. Safe to delete or regenerate anytime.
 
 | File | Board / env | Notes |
 | --- | --- | --- |
-| `Bruce-CYD-2432S028.bin` | `CYD-2432S028` (ESP32, ILI9341, resistive touch) | Includes the Cam Detector features (Camera Radar catch-all: AP+BLE+LAN+P2P+SADP+ONVIF / Deauth All + Target / TUTK Watch / persistent Flock / multi-vendor Bodycam / RayBan / NRF jamming: Jam All / Target Jam / per-camera jam). Merged image → flash at offset `0x0`. |
+| `Bruce-CYD-2432S028.bin` | `CYD-2432S028` (ESP32, ILI9341, resistive touch) | Includes the Cam Detector features (Camera Radar catch-all: AP+BLE+LAN+P2P+SADP+ONVIF+HTTP / Deauth All + Target / TUTK Watch / persistent Flock / multi-vendor Bodycam / RayBan / NRF jamming: Jam All / Target Jam / per-camera jam). Merged image → flash at offset `0x0`. |
 
 ## Verify then flash
 
 ```sh
 sha256sum Bruce-CYD-2432S028.bin
-# 8852dfea0e2e7560ba4715e4c786ea0ae7d48b2400e31160bcdd127ecb6ed7bf
+# c8b937842593bd5926ee26832ea3491cfd072e0a8975fadd2da1cd2d69422e83
 
 esptool.py --chip esp32 --port /dev/ttyACM0 write_flash 0x0 Bruce-CYD-2432S028.bin
 ```

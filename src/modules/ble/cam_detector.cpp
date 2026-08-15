@@ -541,6 +541,7 @@ enum RadarSurface { RS_AP, RS_CLIENT, RS_BLE };
 struct RadarCam {
     String brand;
     String name;   // ssid / ble name / p2p uid
+    String detail; // enumeration extras: serial / firmware / server banner
     String macStr; // lowercase aa:bb:cc:...
     uint8_t mac[6];
     RadarSurface surface;
@@ -667,6 +668,39 @@ static struct netif *radarStaNetif() {
 // subnet), not a detection bug.
 static int g_lanHostsSeen = 0;
 
+// Identify a camera from its HTTP Server header + Digest realm. The realm is
+// the strongest signal: Hikvision uses the model ("DS-..."), Dahua "DH_<mac>".
+// Falls back to the shared brand DB on the Server/realm text. Returns nullptr
+// when nothing camera-specific matched (plain web server, router, printer...).
+static const char *httpIdentifyCamera(
+    const String &server, const String &realm, String &modelOut, const char **methodOut
+) {
+    String rl = lc(realm), sl = lc(server);
+    auto model = [&]() { return realm.isEmpty() ? server : realm; };
+
+    if (rl.startsWith("ds-") || sl.indexOf("dvrdvs") >= 0 || sl.indexOf("app-webs") >= 0 ||
+        sl.indexOf("hikvision") >= 0) {
+        modelOut = model();
+        if (methodOut) *methodOut = "HTTP realm";
+        return "Hikvision";
+    }
+    if (rl.startsWith("dh_") || rl.startsWith("dh-") || rl.indexOf("dahua") >= 0 ||
+        sl.indexOf("dahua") >= 0) {
+        modelOut = model();
+        if (methodOut) *methodOut = "HTTP realm";
+        return "Dahua";
+    }
+    // Other brands sometimes name themselves in the Server header / realm.
+    const char *m = nullptr;
+    const char *b = identifyCamera(String(""), lc(sl + " " + rl), &m);
+    if (b) {
+        modelOut = model();
+        if (methodOut) *methodOut = "HTTP";
+        return b;
+    }
+    return nullptr;
+}
+
 // Resolve one IP to a MAC via ARP (used for devices that announce themselves by
 // IP only, e.g. ONVIF). Returns false when ARP is blocked or the host is gone.
 static bool radarResolveMac(const IPAddress &ip, uint8_t out[6]) {
@@ -708,6 +742,11 @@ static void radarScanLan(bool alert) {
     if (last > first + 1021) last = first + 1021;
 
     std::vector<String> hostMacs; // every LAN host resolved (dedup) - diagnostic
+    struct LanHost {
+        IPAddress ip;
+        uint8_t mac[6];
+    };
+    std::vector<LanHost> liveHosts; // resolved hosts, for the HTTP enum pass
     auto harvest = [&]() {
         for (uint32_t i = 0; i < ARP_TABLE_SIZE; i++) {
             ip4_addr_t *ipr = nullptr;
@@ -724,7 +763,15 @@ static void radarScanLan(bool alert) {
                     knownHost = true;
                     break;
                 }
-            if (!knownHost) hostMacs.push_back(mac);
+            if (!knownHost) {
+                hostMacs.push_back(mac);
+                if (liveHosts.size() < 96) {
+                    LanHost lh;
+                    lh.ip = IPAddress(ipr->addr);
+                    memcpy(lh.mac, ethr->addr, 6);
+                    liveHosts.push_back(lh);
+                }
+            }
             const char *method = nullptr;
             const char *brand = identifyCamera(mac, String(""), &method);
             if (!brand || radarSeen(ethr->addr)) continue;
@@ -812,6 +859,7 @@ static void radarScanLan(bool alert) {
                 if (memcmp(ex.mac, mb, 6) != 0) continue;
                 if (ex.name.indexOf(pc.model) < 0) ex.name = label;
                 if (ex.method.indexOf(pc.method) < 0) ex.method += " + " + pc.method;
+                if (ex.detail.isEmpty() && !pc.detail.isEmpty()) ex.detail = pc.detail;
                 if (!ex.haveIp) {
                     ex.haveIp = true;
                     ex.ip = pc.ip;
@@ -825,6 +873,7 @@ static void radarScanLan(bool alert) {
         RadarCam c = {};
         c.brand = pc.brand;
         c.name = pc.model.isEmpty() ? pc.ip.toString() : pc.model;
+        c.detail = pc.detail;
         if (haveMac) {
             char ms[18];
             macToStr6(mb, ms);
@@ -843,6 +892,51 @@ static void radarScanLan(bool alert) {
             memcpy(c.apBssid, curBssid, 6);
             c.channel = curCh;
         }
+        g_radar.push_back(c);
+        if (alert) radarAlert(g_radar.back());
+    }
+
+    // HTTP enumeration pass over the live hosts the ARP sweep resolved. The
+    // Digest realm is the exact model for Hikvision/Dahua web UIs, so this both
+    // enriches a device already found by OUI and *discovers* cameras whose OUI
+    // we don't know (as long as their web UI is on port 80).
+    for (auto &lh : liveHosts) {
+        if (radarExitTapped()) break;
+        String server, realm;
+        if (!httpHeaderProbe(lh.ip, server, realm)) continue;
+
+        String model;
+        const char *method = nullptr;
+        const char *brand = httpIdentifyCamera(server, realm, model, &method);
+        if (!brand) continue;
+
+        // Enrich the existing entry for this MAC if we already have it.
+        bool merged = false;
+        for (auto &ex : g_radar) {
+            if (memcmp(ex.mac, lh.mac, 6) != 0) continue;
+            if (!model.isEmpty() && ex.name.indexOf(model) < 0) ex.name = ex.brand + " " + model;
+            if (ex.method.indexOf("HTTP") < 0) ex.method += " + HTTP";
+            if (ex.detail.isEmpty() && !server.isEmpty()) ex.detail = server;
+            merged = true;
+            break;
+        }
+        if (merged) continue;
+
+        RadarCam c = {};
+        c.brand = brand;
+        c.name = model.isEmpty() ? lh.ip.toString() : model;
+        c.detail = server;
+        char ms[18];
+        macToStr6(lh.mac, ms);
+        c.macStr = ms;
+        memcpy(c.mac, lh.mac, 6);
+        c.surface = RS_CLIENT;
+        c.method = method;
+        c.haveIp = true;
+        c.ip = lh.ip;
+        c.deauthable = true;
+        memcpy(c.apBssid, curBssid, 6);
+        c.channel = curCh;
         g_radar.push_back(c);
         if (alert) radarAlert(g_radar.back());
     }
@@ -919,6 +1013,7 @@ static void radarInfo(const RadarCam &c) {
     padprintln(String(" Seen:   ") + s);
     padprintln(" Method: " + c.method);
     if (c.surface != RS_BLE) padprintln(" Chan:   " + String(c.channel));
+    if (!c.detail.isEmpty()) padprintln(" Info:   " + c.detail);
     tft.drawCentreString("Press " + String(BTN_ALIAS) + " to exit", tftWidth / 2, tftHeight - 18, 1);
     delay(300);
     while (!check(SelPress) && !check(EscPress)) yield();
