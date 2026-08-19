@@ -733,6 +733,14 @@ static void radarScanLan(bool alert) {
     memcpy(curBssid, WiFi.BSSID(), 6);
     uint8_t curCh = (uint8_t)WiFi.channel();
 
+    // Abort predicate for the long loops below. Only the wardrive (alert) draws
+    // the [X] and should stop on a screen tap; a passive scan has no [X], so it
+    // must use the plain Esc check - otherwise a stray/phantom resistive touch
+    // in the top-left aborts the ARP sweep and it misses LAN cameras (this
+    // regressed CloudEdge/Meari detection).
+    std::function<bool()> lanAbort = alert ? std::function<bool()>(radarExitTapped)
+                                           : std::function<bool()>([]() { return check(EscPress); });
+
     uint32_t myHost = ipOctetsToU32(WiFi.localIP());
     uint32_t maskHost = ipOctetsToU32(WiFi.subnetMask());
     uint32_t netHost = myHost & maskHost;
@@ -794,9 +802,10 @@ static void radarScanLan(bool alert) {
     // Use the proven ARP-request path (as netcut) rather than UDP pings. The
     // ESP32 ARP table is tiny (~10 entries), so harvest after every request so a
     // resolved host is read within its own window before later requests evict it.
-    // radarExitTapped() (not check(EscPress)) so the sweep is interruptible on
-    // touch-only boards too - this loop can run for thousands of hosts.
-    for (uint32_t h = first; h <= last && !radarExitTapped(); h++) {
+    // lanAbort so the sweep is interruptible (touch in wardrive, Esc in passive)
+    // without a stray touch killing a passive scan - this loop can run for
+    // thousands of hosts.
+    for (uint32_t h = first; h <= last && !lanAbort(); h++) {
         if (h == myHost) continue;
         if (nif) {
             ip4_addr_t target;
@@ -840,9 +849,9 @@ static void radarScanLan(bool alert) {
     // catch devices no OUI/SSID rule can (OEM rebrands, unknown prefixes) and
     // return a real model string. SADP = Hikvision family, ONVIF = everyone.
     std::vector<ProbedCam> probed;
-    sadpDiscover(probed, radarExitTapped);
-    onvifDiscover(probed, radarExitTapped);
-    dahuaDiscover(probed, radarExitTapped); // Dahua DHIP (verified on DH-IPC-HDW1235)
+    sadpDiscover(probed, lanAbort);
+    onvifDiscover(probed, lanAbort);
+    dahuaDiscover(probed, lanAbort); // Dahua DHIP (verified on DH-IPC-HDW1235)
     for (auto &pc : probed) {
         uint8_t mb[6];
         bool haveMac = pc.haveMac;
@@ -902,7 +911,7 @@ static void radarScanLan(bool alert) {
     // enriches a device already found by OUI and *discovers* cameras whose OUI
     // we don't know (as long as their web UI is on port 80).
     for (auto &lh : liveHosts) {
-        if (radarExitTapped()) break;
+        if (lanAbort()) break;
         String server, realm;
         if (!httpHeaderProbe(lh.ip, server, realm)) continue;
 
