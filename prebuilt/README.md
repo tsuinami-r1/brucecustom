@@ -20,12 +20,12 @@ flash at offset `0x0`.
 ```sh
 # CYD-2432S028 (ESP32)
 sha256sum Bruce-CYD-2432S028.bin
-# da0dd945b796eb8c13571c92c7ecef53d622e08358683fdbada08769915e09f4
+# 91d5e7e7c06b70af922d5706a7b0d070be8c1951dc24bb52b52f3feb9d3ab6a2
 esptool.py --chip esp32 --port /dev/ttyACM0 write_flash 0x0 Bruce-CYD-2432S028.bin
 
 # LilyGo T-Watch-S3 (ESP32-S3)
 sha256sum Bruce-lilygo-t-watch-s3.bin
-# 8c3d9c6b4a137cb6db284323cd4c93aa8c57ba24006c90a0546ee6fb86e19671
+# f1387c0719196e6d9a815d579f5c88798c09ea00a29a98be530bbee4c1fef557
 esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 Bruce-lilygo-t-watch-s3.bin
 ```
 
