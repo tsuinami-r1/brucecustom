@@ -40,6 +40,10 @@ struct ProbedCam {
 void sadpDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
 void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
 
+// Dahua DHIP discovery (UDP 37810, multicast 239.255.255.251). The response
+// carries the MAC and an exact DeviceType (model), serial and firmware.
+void dahuaDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort = nullptr);
+
 // Unauthenticated HTTP enumeration: GET / on port 80 and return the Server
 // header and the Digest `realm` from a 401 (empty when absent). For camera web
 // UIs the realm is often the exact model - "DS-2CD2432F-IW" (Hikvision) or

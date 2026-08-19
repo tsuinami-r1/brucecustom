@@ -5,10 +5,13 @@
 #include <ctype.h>
 #include <functional>
 
-// Both protocols use the same SSDP-style multicast group, on different ports.
-static const char *MCAST_GROUP = "239.255.255.250";
+// SADP + ONVIF share the SSDP multicast group 239.255.255.250; Dahua's DHIP
+// discovery uses the adjacent 239.255.255.251. All are passed per-probe.
+static const char *SSDP_GROUP = "239.255.255.250";
+static const char *DHIP_GROUP = "239.255.255.251";
 static const uint16_t SADP_PORT = 37020;
 static const uint16_t ONVIF_PORT = 3702;
+static const uint16_t DHIP_PORT = 37810;
 
 // Responses arrive as a single datagram; a ProbeMatch fits well inside an MTU.
 static const int PROBE_BUF = 1600;
@@ -45,15 +48,19 @@ static bool alreadyProbed(const std::vector<ProbedCam> &out, const IPAddress &ip
 
 // Shared transceiver: join the group, send `payload` a few times, then collect
 // datagrams for `windowMs` and hand each one to `onReply`.
+// Raw payload + explicit group: DHIP frames carry NUL bytes, so a String
+// payload would truncate. Replies are handed back as (bytes, len) for the same
+// reason (a DHIP reply begins with 0x20 then a NUL).
 static void multicastProbe(
-    uint16_t port, const String &payload, uint32_t windowMs,
-    std::function<void(const String &, const IPAddress &)> onReply, std::function<bool()> shouldAbort
+    const char *groupStr, uint16_t port, const uint8_t *payload, size_t payloadLen, uint32_t windowMs,
+    std::function<void(const uint8_t *, int, const IPAddress &)> onReply,
+    std::function<bool()> shouldAbort
 ) {
     if (WiFi.status() != WL_CONNECTED) return;
     if (shouldAbort && shouldAbort()) return;
 
     IPAddress group;
-    if (!group.fromString(MCAST_GROUP)) return;
+    if (!group.fromString(groupStr)) return;
 
     WiFiUDP udp;
     // Joining the group means we also see the multicast replies some devices
@@ -73,13 +80,13 @@ static void multicastProbe(
             int n = udp.read(buf, PROBE_BUF - 1);
             if (n <= 0) break;
             buf[n] = '\0';
-            onReply(String(buf), from);
+            onReply((const uint8_t *)buf, n, from);
         }
     };
 
     for (int i = 0; i < 3; i++) {
         udp.beginPacket(group, port);
-        udp.write((const uint8_t *)payload.c_str(), payload.length());
+        udp.write(payload, payloadLen);
         udp.endPacket();
         for (int t = 0; t < 6; t++) {
             delay(10);
@@ -107,7 +114,10 @@ void sadpDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort
                          "<Probe><Uuid>B0A4E2C1-1D33-4B7E-9E21-5F0C7A9D3E64</Uuid>"
                          "<Types>inquiry</Types></Probe>";
 
-    multicastProbe(SADP_PORT, probe, 2500, [&out](const String &xml, const IPAddress &from) {
+    multicastProbe(
+        SSDP_GROUP, SADP_PORT, (const uint8_t *)probe.c_str(), probe.length(), 2500,
+        [&out](const uint8_t *data, int, const IPAddress &from) {
+        String xml((const char *)data);
         if (xml.indexOf("ProbeMatch") < 0) return;
 
         ProbedCam c = {};
@@ -165,7 +175,10 @@ void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbor
         "<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe></e:Body>"
         "</e:Envelope>";
 
-    multicastProbe(ONVIF_PORT, probe, 3000, [&out](const String &xml, const IPAddress &from) {
+    multicastProbe(
+        SSDP_GROUP, ONVIF_PORT, (const uint8_t *)probe.c_str(), probe.length(), 3000,
+        [&out](const uint8_t *data, int, const IPAddress &from) {
+        String xml((const char *)data);
         if (xml.indexOf("ProbeMatch") < 0) return;
 
         ProbedCam c = {};
@@ -196,6 +209,67 @@ void onvifDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbor
 
         out.push_back(c);
     }, shouldAbort);
+}
+
+// Extract a JSON "key":"value" string value (flat scan, good enough for the
+// single-object deviceInfo blob Dahua returns). Returns "" when absent.
+static String jsonStr(const String &json, const char *key) {
+    String needle = String("\"") + key + "\":\"";
+    int i = json.indexOf(needle);
+    if (i < 0) return "";
+    int s = i + needle.length();
+    int e = json.indexOf('"', s);
+    if (e < 0) return "";
+    return json.substring(s, e);
+}
+
+void dahuaDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort) {
+    // Dahua DHIP discovery, verified against a DH-IPC-HDW1235 capture. The wire
+    // format is a 32-byte DHIP header (magic 0x20, "DHIP", 8-byte session=0, and
+    // the payload length as LE32 at offsets 16 and 24) followed by JSON. The
+    // reply is the same framing wrapping a client.notifyDevInfo/deviceInfo blob
+    // that carries the MAC directly - so, like SADP, no ARP is needed.
+    // Byte-for-byte the ConfigTool inquiry, including the trailing newline that
+    // makes the DHIP payload length 0x49 (73) as seen on the wire.
+    const char body[] = "{ \"method\" : \"DHDiscover.search\", \"params\" : { \"mac\" : \"\", \"uni\" : 1 } }\n";
+    const uint32_t blen = (uint32_t)strlen(body);
+    uint8_t pkt[32 + sizeof(body)];
+    memset(pkt, 0, 32);
+    pkt[0] = 0x20;
+    memcpy(pkt + 4, "DHIP", 4);
+    memcpy(pkt + 16, &blen, 4); // little-endian on the ESP32
+    memcpy(pkt + 24, &blen, 4);
+    memcpy(pkt + 32, body, blen);
+
+    multicastProbe(
+        DHIP_GROUP, DHIP_PORT, pkt, 32 + blen, 2500,
+        [&out](const uint8_t *data, int len, const IPAddress &from) {
+            if (len < 40 || data[0] != 0x20 || memcmp(data + 4, "DHIP", 4) != 0) return;
+            String json((const char *)(data + 32)); // buf is NUL-terminated at len
+            if (json.indexOf("deviceInfo") < 0 && json.indexOf("DHDiscover") < 0) return;
+
+            ProbedCam c = {};
+            c.method = "DHIP";
+            String vendor = jsonStr(json, "Vendor");
+            c.brand = vendor.isEmpty() ? String("Dahua") : vendor;
+            c.model = jsonStr(json, "DeviceType");
+
+            String ipStr = jsonStr(json, "IPAddress");
+            if (ipStr.isEmpty() || !c.ip.fromString(ipStr)) c.ip = from;
+            if (alreadyProbed(out, c.ip)) return;
+
+            c.haveMac = parseSadpMac(jsonStr(json, "mac"), c.mac);
+
+            String sn = jsonStr(json, "SerialNo");
+            String ver = jsonStr(json, "Version");
+            c.detail = sn;
+            if (!ver.isEmpty()) c.detail += c.detail.isEmpty() ? ver : (" / " + ver);
+
+            if (c.model.isEmpty()) c.model = "Dahua device";
+            out.push_back(c);
+        },
+        shouldAbort
+    );
 }
 
 // Pull realm="..." out of a WWW-Authenticate header (Basic or Digest).

@@ -842,6 +842,7 @@ static void radarScanLan(bool alert) {
     std::vector<ProbedCam> probed;
     sadpDiscover(probed, radarExitTapped);
     onvifDiscover(probed, radarExitTapped);
+    dahuaDiscover(probed, radarExitTapped); // Dahua DHIP (verified on DH-IPC-HDW1235)
     for (auto &pc : probed) {
         uint8_t mb[6];
         bool haveMac = pc.haveMac;
