@@ -1,6 +1,7 @@
 #include "cam_probe.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
 #include <ctype.h>
 #include <functional>
@@ -309,13 +310,12 @@ static String headerRealm(const String &respLower, const String &resp) {
     return resp.substring(s, e);
 }
 
-bool httpHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs) {
-    server = "";
-    realm = "";
-    if (WiFi.status() != WL_CONNECTED) return false;
-
-    WiFiClient client;
-    if (!client.connect(ip, 80, timeoutMs)) return false;
+// Send GET / on an already-connected client (plain or TLS) and pull the Server
+// header + Digest realm out of the response headers. Shared by the HTTP and
+// HTTPS probes so both read identically.
+static bool readCamHeaders(
+    Client &client, const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs
+) {
     client.print(
         String("GET / HTTP/1.0\r\nHost: ") + ip.toString() +
         "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
@@ -343,4 +343,32 @@ bool httpHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_
     }
     realm = headerRealm(low, resp);
     return true;
+}
+
+bool httpHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs) {
+    server = "";
+    realm = "";
+    if (WiFi.status() != WL_CONNECTED) return false;
+
+    WiFiClient client;
+    if (!client.connect(ip, 80, timeoutMs)) return false;
+    return readCamHeaders(client, ip, server, realm, timeoutMs);
+}
+
+bool httpsHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs) {
+    server = "";
+    realm = "";
+    if (WiFi.status() != WL_CONNECTED) return false;
+
+    // Modern Dahua/Hikvision firmware often disables plain HTTP and serves the
+    // web UI (and its Digest realm) only over TLS on 443 - verified on a
+    // DH-IPC-HDW1235C-A-V5 that advertises HttpPort 80 but answers nothing there.
+    // We only want the headers, so skip certificate validation.
+    WiFiClientSecure client;
+    client.setInsecure();
+    if (!client.connect(ip, 443, timeoutMs)) {
+        client.stop();
+        return false;
+    }
+    return readCamHeaders(client, ip, server, realm, timeoutMs);
 }

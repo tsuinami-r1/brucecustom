@@ -909,23 +909,35 @@ static void radarScanLan(bool alert) {
     // HTTP enumeration pass over the live hosts the ARP sweep resolved. The
     // Digest realm is the exact model for Hikvision/Dahua web UIs, so this both
     // enriches a device already found by OUI and *discovers* cameras whose OUI
-    // we don't know (as long as their web UI is on port 80).
+    // we don't know. We try plain HTTP on 80 first, then fall back to HTTPS on
+    // 443 - modern Dahua/Hikvision firmware often disables port 80 and serves
+    // the web UI (and its realm) only over TLS.
     for (auto &lh : liveHosts) {
         if (lanAbort()) break;
         String server, realm;
-        if (!httpHeaderProbe(lh.ip, server, realm)) continue;
+        bool viaTls = false;
+        if (!httpHeaderProbe(lh.ip, server, realm)) {
+            if (lanAbort()) break;
+            if (!httpsHeaderProbe(lh.ip, server, realm)) continue;
+            viaTls = true;
+        }
 
         String model;
         const char *method = nullptr;
         const char *brand = httpIdentifyCamera(server, realm, model, &method);
         if (!brand) continue;
 
+        // Label the transport that actually answered (HTTP realm -> HTTPS realm).
+        String methodLabel = method;
+        if (viaTls) methodLabel.replace("HTTP", "HTTPS");
+        const char *addLabel = viaTls ? " + HTTPS" : " + HTTP";
+
         // Enrich the existing entry for this MAC if we already have it.
         bool merged = false;
         for (auto &ex : g_radar) {
             if (memcmp(ex.mac, lh.mac, 6) != 0) continue;
             if (!model.isEmpty() && ex.name.indexOf(model) < 0) ex.name = ex.brand + " " + model;
-            if (ex.method.indexOf("HTTP") < 0) ex.method += " + HTTP";
+            if (ex.method.indexOf("HTTP") < 0) ex.method += addLabel;
             if (ex.detail.isEmpty() && !server.isEmpty()) ex.detail = server;
             merged = true;
             break;
@@ -941,7 +953,7 @@ static void radarScanLan(bool alert) {
         c.macStr = ms;
         memcpy(c.mac, lh.mac, 6);
         c.surface = RS_CLIENT;
-        c.method = method;
+        c.method = methodLabel;
         c.haveIp = true;
         c.ip = lh.ip;
         c.deauthable = true;

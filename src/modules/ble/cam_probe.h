@@ -51,4 +51,11 @@ void dahuaDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbor
 // touching credentials. Returns true if the host answered as HTTP at all.
 bool httpHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs = 500);
 
+// Same enumeration over TLS on port 443. Modern Dahua/Hikvision firmware often
+// disables plain HTTP and exposes the web UI (and its Digest realm) only on
+// HTTPS, so this is the fallback when httpHeaderProbe finds nothing on 80. The
+// certificate is not validated (headers only). Needs a longer timeout than the
+// HTTP probe because it includes the TLS handshake.
+bool httpsHeaderProbe(const IPAddress &ip, String &server, String &realm, uint32_t timeoutMs = 2500);
+
 #endif
