@@ -69,6 +69,30 @@ static void multicastProbe(
         if (!udp.begin(port)) return;
     }
 
+    // Many networks drop multicast between wireless clients (IGMP snooping,
+    // client isolation), yet the same cameras answer a broadcast probe - the
+    // DH-IPC-HDW1235 capture replied to DHIP on 255.255.255.255 byte-for-byte
+    // identically to the multicast. So we also fire the payload at the directed
+    // subnet broadcast (most likely to cross an AP) and the global broadcast.
+    IPAddress lip = WiFi.localIP(), mask = WiFi.subnetMask();
+    IPAddress directed(
+        lip[0] | (uint8_t)~mask[0], lip[1] | (uint8_t)~mask[1], lip[2] | (uint8_t)~mask[2],
+        lip[3] | (uint8_t)~mask[3]
+    );
+    const IPAddress global(255, 255, 255, 255);
+    bool directedOk = mask[0] != 0 && directed != global;
+
+    auto emit = [&](const IPAddress &dst) {
+        udp.beginPacket(dst, port);
+        udp.write(payload, payloadLen);
+        udp.endPacket();
+    };
+    auto sendAll = [&]() {
+        emit(group);
+        if (directedOk) emit(directed);
+        emit(global);
+    };
+
     static char buf[PROBE_BUF];
     // Drain between sends too: replies to the first probe arrive within
     // milliseconds and would otherwise sit in the socket buffer (and can be
@@ -85,9 +109,7 @@ static void multicastProbe(
     };
 
     for (int i = 0; i < 3; i++) {
-        udp.beginPacket(group, port);
-        udp.write(payload, payloadLen);
-        udp.endPacket();
+        sendAll();
         for (int t = 0; t < 6; t++) {
             delay(10);
             drain();
@@ -228,7 +250,10 @@ void dahuaDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbor
     // format is a 32-byte DHIP header (magic 0x20, "DHIP", 8-byte session=0, and
     // the payload length as LE32 at offsets 16 and 24) followed by JSON. The
     // reply is the same framing wrapping a client.notifyDevInfo/deviceInfo blob
-    // that carries the MAC directly - so, like SADP, no ARP is needed.
+    // (params.deviceInfo{DeviceType,SerialNo,Version,Vendor,IPv4Address.IPAddress}
+    // with the MAC at top level) - so, like SADP, no ARP is needed. Confirmed
+    // live against a DH-IPC-HDW1235C-A-V5 answering on both multicast and
+    // broadcast; the flat key scan below reads it regardless of nesting depth.
     // Byte-for-byte the ConfigTool inquiry, including the trailing newline that
     // makes the DHIP payload length 0x49 (73) as seen on the wire.
     const char body[] = "{ \"method\" : \"DHDiscover.search\", \"params\" : { \"mac\" : \"\", \"uni\" : 1 } }\n";
