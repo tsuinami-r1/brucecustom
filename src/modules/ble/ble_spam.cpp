@@ -140,6 +140,7 @@ static const uint8_t continuity_na_actions[] = {
     0x06,
     0x0D,
     0x2B,
+    0xC0,
 };
 static const int continuity_na_actions_count =
     sizeof(continuity_na_actions) / sizeof(continuity_na_actions[0]);
@@ -589,6 +590,7 @@ static const AppleProximityDevice APPLE_PROXIMITY_DEVICES[] = {
     {"Beats Solo 4",              0x2520},
     {"Beats Solo Buds",           0x2620},
     {"Powerbeats Fit",            0x2F20},
+    {"Software Update",           0x2E20},
 };
 static const int APPLE_PROXIMITY_DEVICE_COUNT =
     sizeof(APPLE_PROXIMITY_DEVICES) / sizeof(APPLE_PROXIMITY_DEVICES[0]);
