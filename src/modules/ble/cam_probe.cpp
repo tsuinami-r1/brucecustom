@@ -159,6 +159,13 @@ void sadpDiscover(std::vector<ProbedCam> &out, std::function<bool()> shouldAbort
         c.detail = sn;
         if (!fw.isEmpty()) c.detail += c.detail.isEmpty() ? fw : (" / " + fw);
 
+        // Hikvision reports whether the device has been activated (admin password
+        // set). An un-activated camera accepts activation from anyone on the LAN,
+        // so flag it - a notable finding for a survey. Verified against a real
+        // DS-2CD1023G0E-I ProbeMatch, which carries <Activated>false</Activated>.
+        if (xmlTag(xml, "Activated").equalsIgnoreCase("false"))
+            c.detail += c.detail.isEmpty() ? "INACTIVE" : " / INACTIVE";
+
         // A SADP responder that doesn't name itself is still a camera/NVR.
         if (c.model.isEmpty()) c.model = "SADP device";
         out.push_back(c);
